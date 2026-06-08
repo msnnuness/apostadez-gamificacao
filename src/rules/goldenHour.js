@@ -1,83 +1,56 @@
-/**
- * Regras de gamificação da ApostaDez
- * Adicione novas regras aqui — cada regra exporta um objeto com:
- *   name, event, check(payload, user), points, reason
- */
+const { getConfig } = require('../database');
 
-// ── Regra 1: Login no horário dourado (18h–19h) ───────────────
-const GOLDEN_HOUR_START = 18;
-const GOLDEN_HOUR_END   = 19;
-const GOLDEN_HOUR_PTS   = 100;
-
-function getLocalHour(isoTimestamp, timezone) {
-  try {
-    const date = new Date(isoTimestamp);
-    const str  = date.toLocaleString('pt-BR', {
-      timeZone : timezone || 'America/Sao_Paulo',
-      hour     : '2-digit',
-      hour12   : false,
-    });
-    return parseInt(str, 10);
-  } catch {
-    // Fallback: UTC-3
-    const date = new Date(isoTimestamp);
-    return (date.getUTCHours() - 3 + 24) % 24;
-  }
+function getLocalHour(ts, tz) {
+  try { return parseInt(new Date(ts).toLocaleString('pt-BR', { timeZone: tz, hour: '2-digit', hour12: false }), 10); }
+  catch { return (new Date(ts).getUTCHours() - 3 + 24) % 24; }
+}
+function getLocalMinute(ts, tz) {
+  try { return parseInt(new Date(ts).toLocaleString('pt-BR', { timeZone: tz, minute: '2-digit', hour12: false }), 10); }
+  catch { return new Date(ts).getUTCMinutes(); }
+}
+function getLocalDateStr(ts, tz) {
+  try { return new Date(ts).toLocaleDateString('pt-BR', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }); }
+  catch { return new Date(ts).toISOString().split('T')[0]; }
 }
 
-function getLocalDateStr(isoTimestamp, timezone) {
-  try {
-    const date = new Date(isoTimestamp);
-    return date.toLocaleDateString('pt-BR', {
-      timeZone : timezone || 'America/Sao_Paulo',
-      year     : 'numeric',
-      month    : '2-digit',
-      day      : '2-digit',
-    });
-  } catch {
-    return new Date(isoTimestamp).toISOString().split('T')[0];
-  }
+// Suporta janelas que cruzam meia-noite (ex: 23:00–00:00)
+function inWindow(timeMin, startMin, endMin) {
+  if (startMin <= endMin) return timeMin >= startMin && timeMin < endMin;
+  return timeMin >= startMin || timeMin < endMin;
 }
 
 const goldenHourRule = {
-  name  : 'Login horário dourado',
-  event : 'user.login',
+  name : 'Login horário dourado',
+  event: 'user.login',
 
-  /**
-   * @param {object} payload  — payload completo do webhook
-   * @param {object|null} user — registro do usuário no banco (pode ser null)
-   * @returns {{ eligible: boolean, reason: string, bonusDate?: string }}
-   */
   check(payload, user) {
-    const timestamp = payload.timestamp;
-    const timezone  = payload.data?.tracking?.deviceInfo?.timezone
-                   || payload.data?.metadata?.timezone
-                   || 'America/Sao_Paulo';
+    const cfg = getConfig();
+    if (!cfg.active) return { eligible: false, reason: 'regra desativada' };
 
-    const hour      = getLocalHour(timestamp, timezone);
-    const bonusDate = getLocalDateStr(timestamp, timezone);
+    const tz = (cfg.useUserTz && (payload.data?.tracking?.deviceInfo?.timezone || payload.data?.metadata?.timezone)) || cfg.defaultTz;
+    const h  = getLocalHour(payload.timestamp, tz);
+    const m  = getLocalMinute(payload.timestamp, tz);
 
-    // Fora da janela?
-    if (hour < GOLDEN_HOUR_START || hour >= GOLDEN_HOUR_END) {
-      return {
-        eligible : false,
-        reason   : `hora local ${hour}h — fora da janela ${GOLDEN_HOUR_START}h–${GOLDEN_HOUR_END}h`,
-      };
+    const [sh, sm] = cfg.windowStart.split(':').map(Number);
+    const [eh, em] = cfg.windowEnd.split(':').map(Number);
+
+    const timeMin  = h * 60 + m;
+    const startMin = sh * 60 + sm;
+    const endMin   = eh * 60 + em;
+
+    if (!inWindow(timeMin, startMin, endMin)) {
+      return { eligible: false, reason: `hora local ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} — fora da janela ${cfg.windowStart}–${cfg.windowEnd}` };
     }
 
-    // Já recebeu bônus hoje?
-    if (user?.loginBonuses?.includes(bonusDate)) {
-      return {
-        eligible : false,
-        reason   : `bônus já concedido hoje (${bonusDate})`,
-      };
+    const bonusDate = getLocalDateStr(payload.timestamp, tz);
+    if (cfg.frequency === 'daily' && user?.loginBonuses?.includes(bonusDate)) {
+      return { eligible: false, reason: `bônus já concedido hoje (${bonusDate})` };
     }
 
-    return { eligible: true, bonusDate, hour, timezone };
+    return { eligible: true, bonusDate, hour: h, timezone: tz };
   },
 
-  points: GOLDEN_HOUR_PTS,
+  get points() { return getConfig().points; },
 };
 
-// ── Exporta todas as regras ───────────────────────────────────
 module.exports = { goldenHourRule };
