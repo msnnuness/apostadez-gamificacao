@@ -29,16 +29,32 @@ router.post('/login', (req, res) => {
     return res.json({ ok: true, processed: false, reason: `evento "${payload.event}" sem regra ativa` });
   }
 
-  // 3. Extrai dados do usuário
-  const userId   = payload.data?.userId   || payload.data?.user_id;
+  // 3. Extrai dados do usuário — tenta todos os campos possíveis
+  const userId   = payload.data?.userId
+                || payload.data?.user_id
+                || payload.data?.id
+                || payload.data?._id
+                || payload.data?.playerId
+                || payload.userId
+                || null;
   const email    = payload.data?.email    || null;
-  const fullName = payload.data?.fullName || null;
-  const env      = payload.metadata?.environment || 'unknown';
+  const fullName = payload.data?.fullName || payload.data?.name || payload.data?.username || null;
+  const env      = payload.metadata?.environment || payload.data?.environment || 'unknown';
   const requestId= payload.metadata?.requestId   || null;
 
   if (!userId) {
-    console.warn('[WEBHOOK] userId ausente no payload');
-    return res.status(400).json({ ok: false, error: 'data.userId ausente no payload' });
+    // Loga o payload completo para diagnóstico
+    console.warn('[WEBHOOK] userId ausente — campos disponíveis em data:', Object.keys(payload.data || {}));
+    console.warn('[WEBHOOK] payload completo:', JSON.stringify(payload).substring(0, 500));
+    // Aceita mesmo assim usando requestId como fallback temporário
+    const fallbackId = requestId || `unknown_${Date.now()}`;
+    console.warn(`[WEBHOOK] usando fallback id: ${fallbackId}`);
+    return res.status(400).json({
+      ok: false,
+      error: 'data.userId ausente no payload',
+      camposRecebidos: Object.keys(payload.data || {}),
+      sugestao: 'adicione data.userId ao payload do webhook'
+    });
   }
 
   console.log(`[WEBHOOK] user.login recebido | userId: ${userId} | env: ${env}`);
