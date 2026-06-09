@@ -1,37 +1,28 @@
 const express = require('express');
 const router  = express.Router();
-const { getConfig, saveConfig, getStats, getAllUsers, getEvents } = require('../database');
+const { getConfig, saveConfig, getStats, getAllUsers, getEvents, getUser } = require('../database');
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'apostadez2026';
 
-// ── Auth middleware ───────────────────────────────────────────
 function auth(req, res, next) {
   const token = req.headers['x-admin-token'] || req.query.token;
-  if (token !== ADMIN_PASSWORD) {
-    return res.status(401).json({ ok: false, error: 'não autorizado' });
-  }
+  if (token !== ADMIN_PASSWORD) return res.status(401).json({ ok: false, error: 'não autorizado' });
   next();
 }
 
-// ── GET /admin/panel — painel HTML ────────────────────────────
 router.get('/panel', (req, res) => {
-  const token = req.query.token || '';
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(buildPanel(token));
+  res.send(buildPanel(req.query.token || ''));
 });
 
-// ── GET /admin/config ─────────────────────────────────────────
-router.get('/config', auth, (_req, res) => {
-  res.json({ ok: true, config: getConfig() });
-});
+router.get('/config', auth, (_req, res) => res.json({ ok: true, config: getConfig() }));
 
-// ── POST /admin/config ────────────────────────────────────────
 router.post('/config', auth, (req, res) => {
   const allowed = ['active','windowStart','windowEnd','points','spinCost','spinValue','frequency','expiryDays','defaultTz','useUserTz'];
   const updates = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
-      if (key === 'active' || key === 'useUserTz') updates[key] = req.body[key] === true || req.body[key] === 'true';
+      if (['active','useUserTz'].includes(key)) updates[key] = req.body[key] === true || req.body[key] === 'true';
       else if (['points','spinCost','expiryDays'].includes(key)) updates[key] = parseInt(req.body[key], 10);
       else if (key === 'spinValue') updates[key] = parseFloat(req.body[key]);
       else updates[key] = req.body[key];
@@ -42,235 +33,405 @@ router.post('/config', auth, (req, res) => {
   res.json({ ok: true, config });
 });
 
-// ── GET /admin/stats ──────────────────────────────────────────
-router.get('/stats', auth, (_req, res) => {
-  res.json({ ok: true, stats: getStats(), config: getConfig() });
+router.get('/stats', auth, (_req, res) => res.json({ ok: true, stats: getStats(), config: getConfig() }));
+router.get('/users', auth, (_req, res) => res.json({ ok: true, users: getAllUsers() }));
+router.get('/users/:userId', auth, (req, res) => {
+  const user = getUser(req.params.userId);
+  if (!user) return res.status(404).json({ ok: false, error: 'não encontrado' });
+  res.json({ ok: true, user });
+});
+router.get('/events', auth, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit)||100, 500);
+  const events = getEvents(limit);
+  res.json({ ok: true, events });
 });
 
-// ── HTML do painel ────────────────────────────────────────────
 function buildPanel(token) {
-  return `<!DOCTYPE html>
+return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>ApostaDez — Painel Admin</title>
+<title>ApostaDez Admin</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;padding:2rem 1rem}
-.container{max-width:700px;margin:0 auto}
-h1{font-size:22px;font-weight:600;margin-bottom:4px}
-.sub{font-size:14px;color:#94a3b8;margin-bottom:2rem}
-.card{background:#1e2130;border:1px solid #2d3348;border-radius:12px;padding:1.5rem;margin-bottom:1rem}
-.card-title{font-size:13px;font-weight:600;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;margin-bottom:1rem;display:flex;align-items:center;gap:8px}
-.row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #2d3348;gap:12px}
-.row:last-child{border-bottom:none}
-.row-label{font-size:14px;color:#e2e8f0;flex:1}
-.row-sub{font-size:12px;color:#64748b;margin-top:2px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:220px;background:#161b2e;border-right:1px solid #2d3348;padding:1.5rem 1rem;display:flex;flex-direction:column;gap:4px}
+.logo{font-size:16px;font-weight:600;margin-bottom:1.5rem;padding:0 8px;color:#a5b4fc}
+.nav-btn{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;font-size:14px;cursor:pointer;border:none;background:none;color:#94a3b8;width:100%;text-align:left;transition:all .15s}
+.nav-btn:hover{background:#1e2130;color:#e2e8f0}
+.nav-btn.active{background:#312e81;color:#a5b4fc;font-weight:500}
+.main{margin-left:220px;padding:2rem}
+.page{display:none}.page.active{display:block}
+h2{font-size:20px;font-weight:600;margin-bottom:4px}
+.sub{font-size:13px;color:#64748b;margin-bottom:1.5rem}
+.card{background:#1e2130;border:1px solid #2d3348;border-radius:12px;padding:1.25rem;margin-bottom:1rem}
+.card-title{font-size:12px;font-weight:600;color:#64748b;letter-spacing:.06em;text-transform:uppercase;margin-bottom:1rem}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:1rem}
+.metric{background:#0f1117;border-radius:10px;padding:14px;text-align:center;border:1px solid #2d3348}
+.metric-val{font-size:26px;font-weight:600;color:#818cf8}
+.metric-label{font-size:11px;color:#64748b;margin-top:3px}
+.cfg-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid #2d3348;gap:12px}
+.cfg-row:last-child{border-bottom:none}
+.cfg-label{font-size:14px;flex:1}.cfg-sub{font-size:12px;color:#64748b;margin-top:2px}
 input[type=time],input[type=number],input[type=text],select{background:#0f1117;border:1px solid #2d3348;border-radius:8px;padding:6px 10px;font-size:13px;color:#e2e8f0;width:130px;text-align:right}
 select{text-align:left;width:160px}
 input:focus,select:focus{outline:none;border-color:#6366f1}
 .toggle{position:relative;display:inline-block;width:36px;height:20px}
 .toggle input{opacity:0;width:0;height:0}
-.tslider{position:absolute;cursor:pointer;inset:0;background:#374151;border-radius:20px;transition:.2s}
-.tslider:before{content:'';position:absolute;width:14px;height:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
-input:checked+.tslider{background:#6366f1}
-input:checked+.tslider:before{transform:translateX(16px)}
-.btn{background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:500;cursor:pointer;width:100%;margin-top:1rem;transition:background .2s}
-.btn:hover{background:#4f46e5}
-.btn-danger{background:#dc2626}
-.btn-danger:hover{background:#b91c1c}
+.tsl{position:absolute;cursor:pointer;inset:0;background:#374151;border-radius:20px;transition:.2s}
+.tsl:before{content:'';position:absolute;width:14px;height:14px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+input:checked+.tsl{background:#6366f1}
+input:checked+.tsl:before{transform:translateX(16px)}
+.btn{background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:500;cursor:pointer;transition:background .2s}
+.btn:hover{background:#4f46e5}.btn-full{width:100%;margin-top:12px}
 .alert{border-radius:8px;padding:10px 14px;font-size:13px;margin-top:10px;display:none}
 .alert-ok{background:#064e3b;color:#6ee7b7;border:1px solid #065f46}
 .alert-err{background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d}
-.login-card{max-width:340px;margin:100px auto}
-.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:1rem}
-.metric{background:#0f1117;border-radius:8px;padding:12px;text-align:center}
-.metric-val{font-size:24px;font-weight:600;color:#6366f1}
-.metric-label{font-size:11px;color:#64748b;margin-top:2px}
-.preview{background:#0f1117;border-radius:8px;padding:12px 16px;margin-top:12px;font-size:13px;color:#94a3b8}
+.preview{background:#0f1117;border-radius:8px;padding:10px 14px;margin-top:12px;font-size:13px;color:#94a3b8}
 .preview strong{color:#6ee7b7}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:11px;font-weight:500;color:#64748b;letter-spacing:.05em;padding:8px 12px;border-bottom:1px solid #2d3348;text-align:left}
+td{padding:10px 12px;border-bottom:1px solid #1e2130;vertical-align:top}
+tr:hover td{background:#1e2130}
+.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500}
+.pill-g{background:#064e3b;color:#6ee7b7}.pill-a{background:#451a03;color:#fed7aa}.pill-b{background:#1e3a5f;color:#93c5fd}.pill-r{background:#450a0a;color:#fca5a5}
+.search{background:#0f1117;border:1px solid #2d3348;border-radius:8px;padding:8px 12px;font-size:13px;color:#e2e8f0;width:100%;margin-bottom:12px}
+.search:focus{outline:none;border-color:#6366f1}
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login-card{background:#1e2130;border:1px solid #2d3348;border-radius:12px;padding:2rem;width:320px}
+.login-card h2{margin-bottom:1rem}
+.login-card input{width:100%;margin-bottom:12px;text-align:left}
 #login-err{color:#fca5a5;font-size:13px;margin-top:8px;display:none}
+.bonus-date{font-size:11px;color:#64748b;background:#0f1117;padding:1px 6px;border-radius:4px;display:inline-block;margin:2px}
+.empty{text-align:center;padding:2rem;color:#475569;font-size:13px}
+.tag-test{background:#312e81;color:#a5b4fc;padding:2px 6px;border-radius:4px;font-size:11px}
 </style>
 </head>
 <body>
-<div class="container" id="app">
 
-${token ? '' : `
-<div class="card login-card">
-  <div class="card-title">🔐 Acesso admin</div>
-  <div style="margin-bottom:12px">
-    <label style="font-size:13px;color:#94a3b8;display:block;margin-bottom:6px">Senha</label>
-    <input type="password" id="pwd" placeholder="Digite a senha" style="width:100%;text-align:left" onkeydown="if(event.key==='Enter')doLogin()"/>
-  </div>
-  <button class="btn" onclick="doLogin()">Entrar</button>
-  <div id="login-err">Senha incorreta</div>
-</div>
-`}
-
-<div id="main" style="display:${token ? 'block' : 'none'}">
-  <h1>🎰 ApostaDez — Admin</h1>
-  <div class="sub">Painel de configuração da gamificação</div>
-
-  <div class="card" id="stats-card">
-    <div class="card-title">📊 Estatísticas</div>
-    <div class="metric-grid">
-      <div class="metric"><div class="metric-val" id="s-users">—</div><div class="metric-label">Usuários</div></div>
-      <div class="metric"><div class="metric-val" id="s-bonused">—</div><div class="metric-label">Bonificados</div></div>
-      <div class="metric"><div class="metric-val" id="s-pts">—</div><div class="metric-label">Pontos emitidos</div></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-title">⚙️ Configurações da regra</div>
-
-    <div class="row">
-      <div><div class="row-label">Regra ativa</div><div class="row-sub">Liga/desliga sem apagar configs</div></div>
-      <label class="toggle"><input type="checkbox" id="cfg-active"><span class="tslider"></span></label>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Hora de início</div><div class="row-sub">Janela começa às</div></div>
-      <input type="time" id="cfg-start"/>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Hora de fim</div><div class="row-sub">Pode cruzar meia-noite</div></div>
-      <input type="time" id="cfg-end"/>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Pontos por login</div></div>
-      <input type="number" id="cfg-points" min="1"/>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Custo de cada free spin</div><div class="row-sub">Pontos necessários por spin</div></div>
-      <input type="number" id="cfg-spincost" min="1"/>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Valor monetário do spin</div><div class="row-sub">Em reais (R$)</div></div>
-      <input type="number" id="cfg-spinvalue" min="0.01" step="0.01"/>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Frequência por usuário</div></div>
-      <select id="cfg-freq">
-        <option value="daily">1x por dia</option>
-        <option value="weekly">1x por semana</option>
-        <option value="unlimited">Ilimitado</option>
-      </select>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Validade dos pontos</div><div class="row-sub">Em dias</div></div>
-      <input type="number" id="cfg-expiry" min="1"/>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Fuso padrão</div><div class="row-sub">Quando payload não informa</div></div>
-      <select id="cfg-tz">
-        <option value="America/Sao_Paulo">São Paulo</option>
-        <option value="America/Fortaleza">Fortaleza</option>
-        <option value="America/Manaus">Manaus</option>
-        <option value="America/Belem">Belém</option>
-        <option value="UTC">UTC</option>
-      </select>
-    </div>
-    <div class="row">
-      <div><div class="row-label">Usar fuso do usuário</div><div class="row-sub">Prioriza timezone do payload</div></div>
-      <label class="toggle"><input type="checkbox" id="cfg-usertz"><span class="tslider"></span></label>
-    </div>
-
-    <div class="preview" id="preview-box"></div>
-    <button class="btn" onclick="saveConfig()">💾 Salvar configurações</button>
-    <div class="alert alert-ok" id="alert-ok">✅ Configurações salvas com sucesso!</div>
-    <div class="alert alert-err" id="alert-err">❌ Erro ao salvar.</div>
+<div id="login-wrap" class="login-wrap" style="display:${token?'none':'flex'}">
+  <div class="login-card">
+    <h2>🔐 ApostaDez Admin</h2>
+    <p style="font-size:13px;color:#64748b;margin-bottom:1rem">Painel de controle da gamificação</p>
+    <input type="password" id="pwd" placeholder="Senha de acesso" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <button class="btn btn-full" onclick="doLogin()">Entrar</button>
+    <div id="login-err">Senha incorreta</div>
   </div>
 </div>
+
+<div id="app" style="display:${token?'flex':'none'};min-height:100vh">
+  <div class="sidebar">
+    <div class="logo">🎰 ApostaDez</div>
+    <button class="nav-btn active" onclick="showPage('dashboard',this)">📊 Dashboard</button>
+    <button class="nav-btn" onclick="showPage('usuarios',this)">👤 Usuários</button>
+    <button class="nav-btn" onclick="showPage('eventos',this)">📋 Eventos</button>
+    <button class="nav-btn" onclick="showPage('config',this)">⚙️ Configurações</button>
+  </div>
+
+  <div class="main">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <h2>Dashboard</h2>
+      <div class="sub">Visão geral da gamificação em tempo real</div>
+      <div class="metric-grid">
+        <div class="metric"><div class="metric-val" id="s-users">—</div><div class="metric-label">Usuários</div></div>
+        <div class="metric"><div class="metric-val" id="s-webhooks">—</div><div class="metric-label">Webhooks recebidos</div></div>
+        <div class="metric"><div class="metric-val" id="s-bonused">—</div><div class="metric-label">Logins bonificados</div></div>
+        <div class="metric"><div class="metric-val" id="s-skipped">—</div><div class="metric-label">Fora da janela</div></div>
+        <div class="metric"><div class="metric-val" id="s-pts">—</div><div class="metric-label">Pontos emitidos</div></div>
+        <div class="metric"><div class="metric-val" id="s-fs">—</div><div class="metric-label">Free spins gerados</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Últimos 10 eventos</div>
+        <table><thead><tr><th>Usuário</th><th>Hora local</th><th>Resultado</th><th>Pontos</th><th>Quando</th></tr></thead>
+        <tbody id="recent-events"><tr><td colspan="5" class="empty">Carregando...</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- USUÁRIOS -->
+    <div class="page" id="page-usuarios">
+      <h2>Usuários</h2>
+      <div class="sub">Controle de pontos e free spins por usuário</div>
+      <input type="text" class="search" id="user-search" placeholder="Buscar por nome, email ou userId..." oninput="filterUsers()"/>
+      <div class="card" style="padding:0;overflow:hidden">
+        <table>
+          <thead><tr><th>#</th><th>Usuário</th><th>Email</th><th>Pontos</th><th>Free Spins</th><th>Último bônus</th><th>Dias bonificados</th></tr></thead>
+          <tbody id="users-tbody"><tr><td colspan="7" class="empty">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- EVENTOS -->
+    <div class="page" id="page-eventos">
+      <h2>Log de eventos</h2>
+      <div class="sub">Todos os webhooks recebidos e processados</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn" style="padding:6px 14px;font-size:12px" onclick="filterEvents('all')">Todos</button>
+        <button class="btn" style="padding:6px 14px;font-size:12px;background:#064e3b" onclick="filterEvents('bonus')">✅ Bonificados</button>
+        <button class="btn" style="padding:6px 14px;font-size:12px;background:#374151" onclick="filterEvents('skip')">⏭ Fora da janela</button>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <table>
+          <thead><tr><th>Usuário</th><th>Email</th><th>Hora local</th><th>Fuso</th><th>Resultado</th><th>Pontos</th><th>Data</th></tr></thead>
+          <tbody id="events-tbody"><tr><td colspan="7" class="empty">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- CONFIG -->
+    <div class="page" id="page-config">
+      <h2>Configurações</h2>
+      <div class="sub">Altere as regras sem precisar mexer no código</div>
+      <div class="card">
+        <div class="card-title">Regra — login no horário dourado</div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Regra ativa</div></div>
+          <label class="toggle"><input type="checkbox" id="cfg-active"><span class="tsl"></span></label>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Hora de início</div><div class="cfg-sub">Janela começa às</div></div>
+          <input type="time" id="cfg-start" oninput="updatePreview()"/>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Hora de fim</div><div class="cfg-sub">Pode cruzar meia-noite (ex: 00:00)</div></div>
+          <input type="time" id="cfg-end" oninput="updatePreview()"/>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Pontos por login</div></div>
+          <input type="number" id="cfg-points" min="1" oninput="updatePreview()"/>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Custo de cada free spin</div><div class="cfg-sub">Quantos pontos = 1 FS</div></div>
+          <input type="number" id="cfg-spincost" min="1" oninput="updatePreview()"/>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Valor do spin (R$)</div></div>
+          <input type="number" id="cfg-spinvalue" min="0.01" step="0.01" oninput="updatePreview()"/>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Frequência por usuário</div></div>
+          <select id="cfg-freq" onchange="updatePreview()">
+            <option value="daily">1x por dia</option>
+            <option value="weekly">1x por semana</option>
+            <option value="unlimited">Ilimitado</option>
+          </select>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Validade dos pontos</div><div class="cfg-sub">Em dias</div></div>
+          <input type="number" id="cfg-expiry" min="1"/>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Fuso padrão</div><div class="cfg-sub">Fallback quando não informado</div></div>
+          <select id="cfg-tz">
+            <option value="America/Sao_Paulo">São Paulo (UTC-3)</option>
+            <option value="America/Fortaleza">Fortaleza (UTC-3)</option>
+            <option value="America/Manaus">Manaus (UTC-4)</option>
+            <option value="America/Belem">Belém (UTC-3)</option>
+            <option value="UTC">UTC</option>
+          </select>
+        </div>
+        <div class="cfg-row">
+          <div><div class="cfg-label">Usar fuso do usuário</div><div class="cfg-sub">Prioriza timezone do payload</div></div>
+          <label class="toggle"><input type="checkbox" id="cfg-usertz"><span class="tsl"></span></label>
+        </div>
+        <div class="preview" id="preview-box">—</div>
+        <button class="btn btn-full" onclick="saveConfig()">💾 Salvar configurações</button>
+        <div class="alert alert-ok" id="alert-ok">✅ Configurações salvas!</div>
+        <div class="alert alert-err" id="alert-err">❌ Erro ao salvar.</div>
+      </div>
+    </div>
+
+  </div>
 </div>
 
 <script>
-let TOKEN = '${token}' || '';
+let TOKEN = '${token}';
+let ALL_USERS = [];
+let ALL_EVENTS = [];
 
 function doLogin(){
   const pwd = document.getElementById('pwd').value;
   fetch('/admin/config?token='+encodeURIComponent(pwd))
-    .then(r => r.json())
-    .then(d => {
-      if(d.ok){ TOKEN=pwd; document.getElementById('main').style.display='block'; document.querySelector('.login-card').style.display='none'; loadConfig(); loadStats(); }
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){ TOKEN=pwd; document.getElementById('login-wrap').style.display='none'; document.getElementById('app').style.display='flex'; init(); }
       else { document.getElementById('login-err').style.display='block'; }
-    }).catch(()=>{ document.getElementById('login-err').style.display='block'; });
+    }).catch(()=>document.getElementById('login-err').style.display='block');
+}
+
+function showPage(id, btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  btn.classList.add('active');
+  if(id==='usuarios') loadUsers();
+  if(id==='eventos')  loadEvents('all');
+  if(id==='config')   loadConfig();
+}
+
+function init(){ loadStats(); loadRecentEvents(); }
+
+function api(path){ return fetch('/admin'+path+'?token='+TOKEN).then(r=>r.json()); }
+
+function loadStats(){
+  api('/stats').then(d=>{
+    if(!d.ok) return;
+    const s=d.stats;
+    document.getElementById('s-users').textContent    = s.totalUsers;
+    document.getElementById('s-webhooks').textContent = s.totalWebhooks;
+    document.getElementById('s-bonused').textContent  = s.totalBonused;
+    document.getElementById('s-skipped').textContent  = s.totalSkipped;
+    document.getElementById('s-pts').textContent      = s.totalPointsGiven;
+    document.getElementById('s-fs').textContent       = s.totalFreeSpins;
+  });
+}
+
+function loadRecentEvents(){
+  api('/events').then(d=>{
+    if(!d.ok) return;
+    const tbody = document.getElementById('recent-events');
+    const recent = d.events.slice(0,10);
+    if(!recent.length){ tbody.innerHTML='<tr><td colspan="5" class="empty">Nenhum evento ainda</td></tr>'; return; }
+    tbody.innerHTML = recent.map(e=>`
+      <tr>
+        <td><span style="font-size:12px;font-family:monospace;color:#94a3b8">${(e.userId||'—').substring(0,16)}…</span>${e.fullName?'<br><span style="font-size:12px;color:#cbd5e1">'+e.fullName+'</span>':''}</td>
+        <td style="font-size:12px">${e.localHour!=null?e.localHour+'h':'—'}${e.timezone?'<br><span style="color:#64748b;font-size:11px">'+e.timezone+'</span>':''}</td>
+        <td>${e.result==='bonus'?'<span class="pill pill-g">✅ bonificado</span>':'<span class="pill pill-r">⏭ sem bônus</span>'}</td>
+        <td style="font-weight:500;color:${e.result==='bonus'?'#6ee7b7':'#64748b'}">${e.result==='bonus'?'+'+e.points+' pts':'—'}</td>
+        <td style="font-size:11px;color:#64748b">${fmtDate(e.loggedAt)}</td>
+      </tr>`).join('');
+  });
+}
+
+function loadUsers(){
+  api('/users').then(d=>{
+    if(!d.ok) return;
+    ALL_USERS = d.users;
+    renderUsers(ALL_USERS);
+  });
+}
+
+function renderUsers(users){
+  const tbody = document.getElementById('users-tbody');
+  if(!users.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">Nenhum usuário ainda</td></tr>'; return; }
+  tbody.innerHTML = users.map((u,i)=>`
+    <tr>
+      <td style="color:#64748b;font-size:12px">${i+1}</td>
+      <td>
+        <div style="font-weight:500">${u.fullName||'—'}</div>
+        <div style="font-size:11px;font-family:monospace;color:#64748b">${u.userId.substring(0,20)}…</div>
+      </td>
+      <td style="font-size:12px;color:#94a3b8">${u.email||'—'}</td>
+      <td><span class="pill pill-a">${u.points} pts</span></td>
+      <td><span class="pill pill-g">${u.freeSpins} FS</span></td>
+      <td style="font-size:12px;color:#94a3b8">${u.lastBonus?fmtDate(u.lastBonus):'—'}</td>
+      <td>${(u.loginBonuses||[]).map(d=>'<span class="bonus-date">'+d+'</span>').join('')||'<span style="color:#475569;font-size:12px">nenhum</span>'}</td>
+    </tr>`).join('');
+}
+
+function filterUsers(){
+  const q = document.getElementById('user-search').value.toLowerCase();
+  renderUsers(ALL_USERS.filter(u=>
+    (u.fullName||'').toLowerCase().includes(q) ||
+    (u.email||'').toLowerCase().includes(q) ||
+    (u.userId||'').toLowerCase().includes(q)
+  ));
+}
+
+let currentFilter = 'all';
+function loadEvents(filter){
+  currentFilter = filter;
+  api('/events?limit=200').then(d=>{
+    if(!d.ok) return;
+    ALL_EVENTS = d.events;
+    renderEvents(filter);
+  });
+}
+
+function filterEvents(filter){ renderEvents(filter); }
+
+function renderEvents(filter){
+  const tbody = document.getElementById('events-tbody');
+  const events = filter==='all' ? ALL_EVENTS : ALL_EVENTS.filter(e=>e.result===filter);
+  if(!events.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">Nenhum evento</td></tr>'; return; }
+  tbody.innerHTML = events.map(e=>`
+    <tr>
+      <td>
+        <div style="font-size:12px;font-weight:500">${e.fullName||'—'}</div>
+        <div style="font-size:11px;font-family:monospace;color:#64748b">${(e.userId||'—').substring(0,18)}…</div>
+      </td>
+      <td style="font-size:12px;color:#94a3b8">${e.email||'—'}</td>
+      <td style="font-size:13px;font-weight:500">${e.localHour!=null?e.localHour+'h':'—'}</td>
+      <td style="font-size:12px;color:#64748b">${e.timezone||'—'}</td>
+      <td>${e.result==='bonus'?'<span class="pill pill-g">✅ bonificado</span>':e.result==='skip'?'<span class="pill pill-r">⏭ fora janela</span>':'<span class="pill pill-b">'+e.result+'</span>'}</td>
+      <td style="font-weight:500;color:${e.result==='bonus'?'#6ee7b7':'#475569'}">${e.result==='bonus'?'+'+e.points+' pts':'—'}</td>
+      <td style="font-size:11px;color:#64748b">${fmtDate(e.loggedAt)}</td>
+    </tr>`).join('');
 }
 
 function loadConfig(){
-  fetch('/admin/config?token='+TOKEN)
-    .then(r=>r.json()).then(d=>{
-      if(!d.ok) return;
-      const c = d.config;
-      document.getElementById('cfg-active').checked   = c.active;
-      document.getElementById('cfg-start').value      = c.windowStart;
-      document.getElementById('cfg-end').value        = c.windowEnd;
-      document.getElementById('cfg-points').value     = c.points;
-      document.getElementById('cfg-spincost').value   = c.spinCost;
-      document.getElementById('cfg-spinvalue').value  = c.spinValue;
-      document.getElementById('cfg-freq').value       = c.frequency;
-      document.getElementById('cfg-expiry').value     = c.expiryDays;
-      document.getElementById('cfg-tz').value         = c.defaultTz;
-      document.getElementById('cfg-usertz').checked   = c.useUserTz;
-      updatePreview(c);
-      ['cfg-start','cfg-end','cfg-points','cfg-spincost','cfg-spinvalue','cfg-freq','cfg-expiry','cfg-tz'].forEach(id=>{
-        document.getElementById(id).addEventListener('input', ()=>updatePreview(getFormValues()));
-      });
-      ['cfg-active','cfg-usertz'].forEach(id=>{
-        document.getElementById(id).addEventListener('change', ()=>updatePreview(getFormValues()));
-      });
-    });
+  api('/config').then(d=>{
+    if(!d.ok) return;
+    const c=d.config;
+    document.getElementById('cfg-active').checked  = c.active;
+    document.getElementById('cfg-start').value     = c.windowStart;
+    document.getElementById('cfg-end').value       = c.windowEnd;
+    document.getElementById('cfg-points').value    = c.points;
+    document.getElementById('cfg-spincost').value  = c.spinCost;
+    document.getElementById('cfg-spinvalue').value = c.spinValue;
+    document.getElementById('cfg-freq').value      = c.frequency;
+    document.getElementById('cfg-expiry').value    = c.expiryDays;
+    document.getElementById('cfg-tz').value        = c.defaultTz;
+    document.getElementById('cfg-usertz').checked  = c.useUserTz;
+    updatePreview();
+  });
 }
 
-function loadStats(){
-  fetch('/admin/stats?token='+TOKEN)
-    .then(r=>r.json()).then(d=>{
-      if(!d.ok) return;
-      const s = d.stats;
-      document.getElementById('s-users').textContent   = s.totalUsers;
-      document.getElementById('s-bonused').textContent = s.totalBonused;
-      document.getElementById('s-pts').textContent     = s.totalPointsGiven;
-    });
-}
-
-function getFormValues(){
-  return {
-    active     : document.getElementById('cfg-active').checked,
-    windowStart: document.getElementById('cfg-start').value,
-    windowEnd  : document.getElementById('cfg-end').value,
-    points     : parseInt(document.getElementById('cfg-points').value)||100,
-    spinCost   : parseInt(document.getElementById('cfg-spincost').value)||1,
-    spinValue  : parseFloat(document.getElementById('cfg-spinvalue').value)||0.20,
-    frequency  : document.getElementById('cfg-freq').value,
-    expiryDays : parseInt(document.getElementById('cfg-expiry').value)||30,
-    defaultTz  : document.getElementById('cfg-tz').value,
-    useUserTz  : document.getElementById('cfg-usertz').checked,
-  };
-}
-
-function updatePreview(c){
-  const spins = Math.floor(c.points / c.spinCost);
-  const val   = (spins * c.spinValue).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+function updatePreview(){
+  const pts   = parseInt(document.getElementById('cfg-points').value)||100;
+  const cost  = parseInt(document.getElementById('cfg-spincost').value)||1;
+  const val   = parseFloat(document.getElementById('cfg-spinvalue').value)||0.20;
+  const start = document.getElementById('cfg-start').value;
+  const end   = document.getElementById('cfg-end').value;
+  const freq  = document.getElementById('cfg-freq').value;
+  const spins = Math.floor(pts/cost);
+  const money = (spins*val).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+  const freqs = {daily:'1x por dia',weekly:'1x por semana',unlimited:'ilimitado'};
   document.getElementById('preview-box').innerHTML =
-    'Resumo: login entre <strong>'+c.windowStart+'–'+c.windowEnd+'</strong> → '+
-    '<strong>'+c.points+' pts</strong> → <strong>'+spins+' free spins</strong> ('+val+') · '+
-    'frequência: <strong>'+{daily:'1x/dia',weekly:'1x/semana',unlimited:'ilimitado'}[c.frequency]+'</strong>';
+    'Login entre <strong>'+start+'–'+end+'</strong> → <strong>'+pts+' pts</strong> → <strong>'+spins+' free spins</strong> ('+money+') · '+freqs[freq];
 }
 
 function saveConfig(){
-  const body = getFormValues();
+  const body = {
+    active    : document.getElementById('cfg-active').checked,
+    windowStart: document.getElementById('cfg-start').value,
+    windowEnd : document.getElementById('cfg-end').value,
+    points    : parseInt(document.getElementById('cfg-points').value),
+    spinCost  : parseInt(document.getElementById('cfg-spincost').value),
+    spinValue : parseFloat(document.getElementById('cfg-spinvalue').value),
+    frequency : document.getElementById('cfg-freq').value,
+    expiryDays: parseInt(document.getElementById('cfg-expiry').value),
+    defaultTz : document.getElementById('cfg-tz').value,
+    useUserTz : document.getElementById('cfg-usertz').checked,
+  };
   fetch('/admin/config?token='+TOKEN,{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify(body)})
     .then(r=>r.json()).then(d=>{
-      const ok  = document.getElementById('alert-ok');
-      const err = document.getElementById('alert-err');
+      const ok=document.getElementById('alert-ok'), err=document.getElementById('alert-err');
       if(d.ok){ok.style.display='block';setTimeout(()=>ok.style.display='none',3000);}
       else    {err.style.display='block';setTimeout(()=>err.style.display='none',3000);}
     });
 }
 
-if(TOKEN){ loadConfig(); loadStats(); }
+function fmtDate(iso){
+  if(!iso) return '—';
+  try{ return new Date(iso).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+  catch{ return iso; }
+}
+
+if(TOKEN) init();
 </script>
-</body>
-</html>`;
+</body></html>`;
 }
 
 module.exports = router;
