@@ -1,133 +1,59 @@
 const express = require('express');
 const router  = express.Router();
-const { ensureUser, addPoints, getUser, logEvent } = require('../database');
-const { goldenHourRule } = require('../rules/goldenHour');
+const { ensureUser, getUser, logEvent } = require('../database');
+const { processLoginEvent } = require('../rules/promoEngine');
 
-// ── Validação básica do payload ───────────────────────────────
 function validatePayload(payload) {
   if (!payload || typeof payload !== 'object') return 'payload inválido';
   if (!payload.event)     return 'campo "event" ausente';
   if (!payload.timestamp) return 'campo "timestamp" ausente';
   if (!payload.data)      return 'campo "data" ausente';
-  return null; // ok
+  return null;
 }
 
-// ── POST /webhook/login ───────────────────────────────────────
 router.post('/login', (req, res) => {
   const payload = req.body;
+  const err = validatePayload(payload);
+  if (err) return res.status(400).json({ ok: false, error: err });
+  if (payload.event !== 'user.login') return res.json({ ok: true, processed: false, reason: `evento "${payload.event}" sem regra ativa` });
 
-  // 1. Validação
-  const validationError = validatePayload(payload);
-  if (validationError) {
-    console.warn('[WEBHOOK] Payload inválido:', validationError);
-    return res.status(400).json({ ok: false, error: validationError });
-  }
-
-  // 2. Só processa user.login
-  if (payload.event !== 'user.login') {
-    console.log(`[WEBHOOK] Evento "${payload.event}" ignorado (sem regra ativa)`);
-    return res.json({ ok: true, processed: false, reason: `evento "${payload.event}" sem regra ativa` });
-  }
-
-  // 3. Extrai dados do usuário — tenta todos os campos possíveis
-  const userId   = payload.data?.userId
-                || payload.data?.user_id
-                || payload.data?.id
-                || payload.data?._id
-                || payload.data?.playerId
-                || payload.userId
-                || null;
+  const userId   = payload.data?.userId || payload.data?.user_id || payload.data?.id;
   const email    = payload.data?.email    || null;
-  const fullName = payload.data?.fullName || payload.data?.name || payload.data?.username || null;
-  const env      = payload.metadata?.environment || payload.data?.environment || 'unknown';
-  const requestId= payload.metadata?.requestId   || null;
+  const fullName = payload.data?.fullName || null;
+  const env      = payload.metadata?.environment || 'unknown';
 
   if (!userId) {
-    // Loga o payload completo para diagnóstico
-    console.warn('[WEBHOOK] userId ausente — campos disponíveis em data:', Object.keys(payload.data || {}));
-    console.warn('[WEBHOOK] payload completo:', JSON.stringify(payload).substring(0, 500));
-    // Aceita mesmo assim usando requestId como fallback temporário
-    const fallbackId = requestId || `unknown_${Date.now()}`;
-    console.warn(`[WEBHOOK] usando fallback id: ${fallbackId}`);
-    return res.status(400).json({
-      ok: false,
-      error: 'data.userId ausente no payload',
-      camposRecebidos: Object.keys(payload.data || {}),
-      sugestao: 'adicione data.userId ao payload do webhook'
-    });
+    console.warn('[WEBHOOK] userId ausente — campos em data:', Object.keys(payload.data || {}));
+    return res.status(400).json({ ok: false, error: 'data.userId ausente', camposRecebidos: Object.keys(payload.data || {}) });
   }
 
-  console.log(`[WEBHOOK] user.login recebido | userId: ${userId} | env: ${env}`);
-
-  // 4. Garante que o usuário existe no banco
+  console.log(`[WEBHOOK] user.login | userId: ${userId} | env: ${env}`);
   ensureUser(userId, { email, fullName });
   const user = getUser(userId);
 
-  // 5. Aplica regra do horário dourado
-  const check = goldenHourRule.check(payload, user);
+  // Processa todas as promos ativas
+  const rewards = processLoginEvent(payload, user);
 
-  const eventLog = {
-    event     : payload.event,
-    userId,
-    email,
-    fullName,
-    timestamp : payload.timestamp,
-    requestId,
-    environment: env,
-    rule      : goldenHourRule.name,
-  };
+  const tz = payload.data?.tracking?.deviceInfo?.timezone || payload.data?.metadata?.timezone || 'America/Sao_Paulo';
+  const localHour = parseInt(new Date(payload.timestamp).toLocaleString('pt-BR', { timeZone: tz, hour: '2-digit', hour12: false }), 10);
 
-  if (!check.eligible) {
-    // Fora da janela ou já bonificado hoje
-    console.log(`[REGRA] Não elegível — ${check.reason}`);
-    logEvent({ ...eventLog, result: 'skip', reason: check.reason });
-
-    return res.json({
-      ok        : true,
-      processed : true,
-      bonus     : false,
-      userId,
-      reason    : check.reason,
+  if (rewards.length > 0) {
+    const totalSpins = rewards.reduce((s, r) => s + r.spins, 0);
+    console.log(`[PROMO] ${rewards.length} promo(s) concedida(s) → ${totalSpins} free spins para ${userId}`);
+    rewards.forEach(r => {
+      logEvent({ event: 'user.login', userId, email, fullName, timestamp: payload.timestamp, result: 'bonus', promoId: r.promoId, promoName: r.promoName, points: r.spins, freeSpins: r.spins, localHour, timezone: tz, environment: env });
     });
+    return res.json({ ok: true, processed: true, bonus: true, userId, email, fullName, rewards, totalSpins });
+  } else {
+    const reason = rewards.length === 0 ? 'nenhuma promo ativa aplicável' : 'condições não atendidas';
+    console.log(`[PROMO] Sem recompensa para ${userId}`);
+    logEvent({ event: 'user.login', userId, email, fullName, timestamp: payload.timestamp, result: 'skip', localHour, timezone: tz, environment: env, reason });
+    return res.json({ ok: true, processed: true, bonus: false, userId, reason });
   }
-
-  // 6. Atribui pontos + free spins
-  const updated = addPoints(userId, goldenHourRule.points, { bonusDate: check.bonusDate });
-  console.log(`[REGRA] ✅ Bônus concedido! userId: ${userId} | +${goldenHourRule.points} pts | hora: ${check.hour}h ${check.timezone}`);
-
-  logEvent({
-    ...eventLog,
-    result    : 'bonus',
-    points    : goldenHourRule.points,
-    freeSpins : goldenHourRule.points,
-    bonusDate : check.bonusDate,
-    localHour : check.hour,
-    timezone  : check.timezone,
-  });
-
-  return res.json({
-    ok        : true,
-    processed : true,
-    bonus     : true,
-    userId,
-    email,
-    fullName,
-    points    : goldenHourRule.points,
-    freeSpins : goldenHourRule.points,
-    totalPoints    : updated.points,
-    totalFreeSpins : updated.freeSpins,
-    message   : `+${goldenHourRule.points} pontos e ${goldenHourRule.points} free spins concedidos!`,
-  });
 });
 
-// ── POST /webhook (aceita qualquer evento — rota genérica) ────
 router.post('/', (req, res) => {
-  // Redireciona para /login se for user.login
-  if (req.body?.event === 'user.login') {
-    req.url = '/login';
-    return router.handle(req, res, () => {});
-  }
-  console.log('[WEBHOOK] Evento recebido em /webhook:', req.body?.event);
+  if (req.body?.event === 'user.login') return router.handle({ ...req, url: '/login' }, res, () => {});
   res.json({ ok: true, processed: false, reason: 'sem regra para este evento' });
 });
 
