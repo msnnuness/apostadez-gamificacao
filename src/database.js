@@ -35,7 +35,6 @@ function saveConfig(u) {
 
 // ── Promos ────────────────────────────────────────────────────
 function getPromos() { db.read(); return db.data.promos || []; }
-
 function savePromo(promo) {
   db.read();
   const idx = db.data.promos.findIndex(p => p.id === promo.id);
@@ -43,18 +42,17 @@ function savePromo(promo) {
   else db.data.promos.push(promo);
   db.write(); return promo;
 }
-
 function deletePromo(id) {
   db.read();
   db.data.promos = db.data.promos.filter(p => p.id !== id);
   db.write();
 }
-
-function getActivePromos() {
+function getActivePromos(trigger) {
   db.read();
   const now = new Date();
   return db.data.promos.filter(p => {
     if (!p.active) return false;
+    if (trigger && p.trigger !== trigger) return false;
     if (p.startDate && new Date(p.startDate) > now) return false;
     if (p.endDate   && new Date(p.endDate)   < now) return false;
     return true;
@@ -63,7 +61,6 @@ function getActivePromos() {
 
 // ── Usuários ──────────────────────────────────────────────────
 function getUser(userId) { db.read(); return db.data.users[userId] || null; }
-
 function ensureUser(userId, { email, fullName } = {}) {
   db.read();
   if (!db.data.users[userId]) {
@@ -71,14 +68,16 @@ function ensureUser(userId, { email, fullName } = {}) {
       userId, email: email||null, fullName: fullName||null,
       points: 0, freeSpins: 0, loginBonuses: [],
       loginDates: [], consecutiveLogins: 0, lastLoginDate: null,
-      promoProgress: {}, // promoId → { count, lastDate, rewarded: [] }
+      depositCount: 0, totalDeposited: 0, firstDepositDone: false,
+      promoProgress: {},
       createdAt: new Date().toISOString(),
     };
     db.write();
-  } else if ((email || fullName) && (!db.data.users[userId].email || !db.data.users[userId].fullName)) {
-    if (email)    db.data.users[userId].email    = email;
-    if (fullName) db.data.users[userId].fullName = fullName;
-    db.write();
+  } else {
+    let changed = false;
+    if (email    && !db.data.users[userId].email)    { db.data.users[userId].email    = email;    changed = true; }
+    if (fullName && !db.data.users[userId].fullName) { db.data.users[userId].fullName = fullName; changed = true; }
+    if (changed) db.write();
   }
   return db.data.users[userId];
 }
@@ -90,7 +89,6 @@ function recordLogin(userId, dateStr) {
   if (!user.loginDates) user.loginDates = [];
   if (!user.loginDates.includes(dateStr)) {
     user.loginDates.push(dateStr);
-    // calcular consecutivos
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const yStr = yesterday.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -99,7 +97,25 @@ function recordLogin(userId, dateStr) {
     user.lastLoginDate = dateStr;
   }
   db.write();
-  return user;
+  return db.data.users[userId];
+}
+
+function recordDeposit(userId, amount, transactionId) {
+  db.read();
+  const user = db.data.users[userId];
+  if (!user) return null;
+  if (!user.depositTransactions) user.depositTransactions = [];
+  // deduplicar por transactionId
+  if (transactionId && user.depositTransactions.includes(transactionId)) {
+    db.write();
+    return { duplicate: true, user };
+  }
+  if (transactionId) user.depositTransactions.push(transactionId);
+  user.depositCount     = (user.depositCount     || 0) + 1;
+  user.totalDeposited   = (user.totalDeposited   || 0) + amount;
+  if (!user.firstDepositDone) user.firstDepositDone = true;
+  db.write();
+  return { duplicate: false, user: db.data.users[userId] };
 }
 
 function addFreeSpins(userId, spins, promoId, rewardKey) {
@@ -115,27 +131,20 @@ function addFreeSpins(userId, spins, promoId, rewardKey) {
   }
   user.lastBonus = new Date().toISOString();
   db.write();
-  return user;
+  return db.data.users[userId];
 }
 
 function getUserPromoProgress(userId, promoId) {
   db.read();
   const user = db.data.users[userId];
-  if (!user) return null;
+  if (!user) return { count: 0, rewarded: [] };
   return user.promoProgress?.[promoId] || { count: 0, rewarded: [] };
 }
 
-function incrementPromoCount(userId, promoId) {
+function getAllUsers() {
   db.read();
-  const user = db.data.users[userId];
-  if (!user) return 0;
-  if (!user.promoProgress[promoId]) user.promoProgress[promoId] = { count: 0, rewarded: [] };
-  user.promoProgress[promoId].count += 1;
-  db.write();
-  return user.promoProgress[promoId].count;
+  return Object.values(db.data.users).sort((a,b) => (b.freeSpins||0) - (a.freeSpins||0));
 }
-
-function getAllUsers() { db.read(); return Object.values(db.data.users).sort((a,b) => b.freeSpins - a.freeSpins); }
 
 // ── Eventos ───────────────────────────────────────────────────
 function logEvent(entry) {
@@ -144,7 +153,6 @@ function logEvent(entry) {
   if (db.data.events.length > 500) db.data.events = db.data.events.slice(0, 500);
   db.write();
 }
-
 function getEvents(limit = 50) { db.read(); return db.data.events.slice(0, limit); }
 
 function getStats() {
@@ -153,20 +161,20 @@ function getStats() {
   const events = db.data.events;
   const totalFS = users.reduce((s,u) => s + (u.freeSpins||0), 0);
   return {
-    totalUsers: users.length,
-    totalFreeSpins: totalFS,
-    totalPointsGiven: totalFS,
-    totalWebhooks: events.length,
-    totalBonused: events.filter(e => e.result === 'bonus').length,
-    totalSkipped: events.filter(e => e.result === 'skip').length,
-    totalPromos: db.data.promos.length,
-    activePromos: getActivePromos().length,
+    totalUsers       : users.length,
+    totalFreeSpins   : totalFS,
+    totalPointsGiven : totalFS,
+    totalWebhooks    : events.length,
+    totalBonused     : events.filter(e => e.result === 'bonus').length,
+    totalSkipped     : events.filter(e => e.result === 'skip').length,
+    totalPromos      : db.data.promos.length,
+    activePromos     : getActivePromos().length,
   };
 }
 
 module.exports = {
   initDB, getConfig, saveConfig,
   getPromos, savePromo, deletePromo, getActivePromos,
-  getUser, ensureUser, recordLogin, addFreeSpins, getUserPromoProgress, incrementPromoCount, getAllUsers,
+  getUser, ensureUser, recordLogin, recordDeposit, addFreeSpins, getUserPromoProgress, getAllUsers,
   logEvent, getEvents, getStats,
 };
