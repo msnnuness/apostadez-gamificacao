@@ -304,9 +304,8 @@ function buildPanel(token) {
 
   'function loadPromos(){api("/promos").then(function(d){' +
   'if(!d.ok)return;var list=document.getElementById("promos-list");' +
-  'if(!d.promos.length){list.innerHTML="<div class=empty>Nenhuma promocao criada ainda. Clique em + Nova Promocao para comecar.</div>";return;}' +
+  'if(!d.promos.length){list.innerHTML="<div class=empty>Nenhuma promocao criada. Clique em + Nova Promocao.</div>";return;}' +
   'var html="";' +
-  'var condLabels={time_window:"Horario especifico",login_count:"Quantidade de logins",consecutive:"Logins consecutivos"};' +
   'var periodLabels={day:"por dia",week:"por semana",month:"por mes"};' +
   'd.promos.forEach(function(p){' +
   'var status=p.active?"<span class=\'pill pill-g\'>ativa</span>":"<span class=\'pill pill-r\'>inativa</span>";' +
@@ -315,13 +314,18 @@ function buildPanel(token) {
   'else if(p.conditionType==="login_count")cond=p.loginRequired+"x "+periodLabels[p.period];' +
   'else if(p.conditionType==="consecutive")cond=p.loginRequired+" dias seguidos";' +
   'var period=(p.startDate||p.endDate)?(p.startDate||"inicio")+" ate "+(p.endDate||"sem fim"):"Permanente";' +
-  'html+="<div class=promo-card><div class=promo-header><div><div class=promo-name>"+p.name+" "+status+"</div>' +
-  '<div class=promo-meta><span>"+cond+"</span><span class=\'pill pill-p\'>"+p.rewardSpins+" free spins</span><span>"+period+"</span></div></div>' +
-  '<div class=promo-actions>' +
-  '<button class=\'btn btn-sm\' style=\'background:#374151\' onclick=\'togglePromo("'+p.id+'","'+(p.active?'false':'true')+'")\'>'+( p.active?'Pausar':'Ativar')+'</button>' +
-  '<button class=\'btn btn-sm\' onclick=\'editPromo("'+p.id+'")\'>Editar</button>' +
-  '<button class=\'btn btn-sm btn-danger\' onclick=\'delPromo("'+p.id+'")\'>Excluir</button>' +
-  '</div></div></div>";' +
+  'var activeLabel=p.active?"Pausar":"Ativar";' +
+  'var activeVal=p.active?"false":"true";' +
+  'html+="<div class=promo-card><div class=promo-header><div>";' +
+  'html+="<div class=promo-name>"+p.name+" "+status+"</div>";' +
+  'html+="<div class=promo-meta><span>"+cond+"</span>";' +
+  'html+="<span class=\'pill pill-p\'>"+p.rewardSpins+" free spins</span>";' +
+  'html+="<span>"+period+"</span></div></div>";' +
+  'html+="<div class=promo-actions>";' +
+  'html+="<button class=\'btn btn-sm\' style=\'background:#374151\' onclick=\'togglePromo(\\\""+p.id+"\\\",\\\""+activeVal+"\\\")\'>"+activeLabel+"</button>";' +
+  'html+="<button class=\'btn btn-sm\' onclick=\'editPromo(\\\""+p.id+"\\\")\'>Editar</button>";' +
+  'html+="<button class=\'btn btn-sm btn-danger\' onclick=\'delPromo(\\\""+p.id+"\\\")\'>Excluir</button>";' +
+  'html+="</div></div></div>";' +
   '});list.innerHTML=html;});}' +
 
   'function openModal(){ EDIT_ID=null; document.getElementById("modal-title").textContent="Nova Promocao";' +
