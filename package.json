@@ -1,6 +1,6 @@
 {
   "name": "apostadez-gamification",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "",
   "main": "server.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "helmet": "^8.2.0",
-    "lowdb": "^7.0.1"
+    "lowdb": "^7.0.1",
     "uuid": "^9.0.0"
   },
   "engines": {
