@@ -233,6 +233,7 @@ function buildPanel(token) {
   '<option value="time_window">Login em horario especifico</option>' +
   '<option value="login_count">Quantidade de logins no periodo</option>' +
   '<option value="consecutive">Logins consecutivos</option>' +
+  '<option value="deposit">Deposito</option>' +
   '</select></div>' +
 
   '<div class="cond-section" id="cond-time_window">' +
@@ -249,6 +250,20 @@ function buildPanel(token) {
 
   '<div class="cond-section" id="cond-consecutive">' +
   '<div class="form-row"><label>Dias consecutivos necessarios</label><input type="number" id="p-consec" value="7" min="2" style="width:100%"/></div>' +
+  '</div>' +
+
+  '<div class="cond-section" id="cond-deposit">' +
+  '<div class="form-row"><label>Tipo de deposito</label>' +
+  '<select id="p-deptype" style="width:100%"><option value="any">Qualquer deposito</option><option value="first">Somente primeiro deposito</option></select></div>' +
+  '<div class="form-row"><label>Valor minimo (R$) - 0 sem minimo</label>' +
+  '<input type="number" id="p-depmin" value="0" min="0" step="0.01" style="width:100%"/></div>' +
+  '<div class="form-row"><label>Frequencia da recompensa</label>' +
+  '<select id="p-depfreq" style="width:100%">' +
+  '<option value="once_per_deposit">1x por deposito</option>' +
+  '<option value="daily">1x por dia</option>' +
+  '<option value="weekly">1x por semana</option>' +
+  '<option value="first_ever">Somente no 1o deposito da vida</option>' +
+  '</select></div>' +
   '</div>' +
 
   '<div class="form-row"><label>Free spins a conceder *</label><input type="number" id="p-spins" value="10" min="1" style="width:100%"/></div>' +
@@ -313,6 +328,7 @@ function buildPanel(token) {
   'if(p.conditionType==="time_window")cond="Login entre "+p.timeStart+" e "+p.timeEnd;' +
   'else if(p.conditionType==="login_count")cond=p.loginRequired+"x "+periodLabels[p.period];' +
   'else if(p.conditionType==="consecutive")cond=p.loginRequired+" dias seguidos";' +
+  'else if(p.conditionType==="deposit"){var depFreqLabel={once_per_deposit:"por deposito",daily:"1x/dia",weekly:"1x/semana",first_ever:"1o deposito vida"}; cond="Deposito "+(p.depositType==="first"?"(1o deposito)":"(qualquer)")+(p.minDepositAmount>0?" min R$"+p.minDepositAmount:"")+" - "+(depFreqLabel[p.depositFrequency]||p.depositFrequency);}' +
   'var period=(p.startDate||p.endDate)?(p.startDate||"inicio")+" ate "+(p.endDate||"sem fim"):"Permanente";' +
   'var activeLabel=p.active?"Pausar":"Ativar";' +
   'var activeVal=p.active?"false":"true";' +
@@ -375,12 +391,17 @@ function buildPanel(token) {
   'var cond=document.getElementById("p-cond").value;' +
   'var spins=document.getElementById("p-spins").value;' +
   'if(!name||!cond||!spins){document.getElementById("promo-err").style.display="block";setTimeout(function(){document.getElementById("promo-err").style.display="none";},3000);return;}' +
+  'var isDeposit=cond==="deposit";' +
   'var body={name:name,description:document.getElementById("p-desc").value,' +
-  'conditionType:cond,rewardSpins:parseInt(spins),active:document.getElementById("p-active").checked,' +
+  'conditionType:cond,trigger:isDeposit?"deposit":"login",' +
+  'rewardSpins:parseInt(spins),active:document.getElementById("p-active").checked,' +
   'startDate:document.getElementById("p-start").value||null,endDate:document.getElementById("p-end").value||null,' +
   'timeStart:document.getElementById("p-tstart").value,timeEnd:document.getElementById("p-tend").value,' +
   'loginRequired:parseInt(document.getElementById("p-lcount").value||document.getElementById("p-consec").value)||3,' +
-  'period:document.getElementById("p-period").value};' +
+  'period:document.getElementById("p-period").value,' +
+  'depositType:document.getElementById("p-deptype")?document.getElementById("p-deptype").value:"any",' +
+  'minDepositAmount:parseFloat(document.getElementById("p-depmin")?document.getElementById("p-depmin").value:0)||0,' +
+  'depositFrequency:document.getElementById("p-depfreq")?document.getElementById("p-depfreq").value:"once_per_deposit"};' +
   'var url=EDIT_ID?"/admin/promos/"+EDIT_ID:"/admin/promos";' +
   'var method=EDIT_ID?"PUT":"POST";' +
   'fetch(url+"?token="+TOKEN,{method:method,headers:{"Content-Type":"application/json","x-admin-token":TOKEN},body:JSON.stringify(body)})' +
